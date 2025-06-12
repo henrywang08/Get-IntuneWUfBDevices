@@ -20,7 +20,6 @@ $graphLoaded = Get-Module -Name 'Microsoft.Graph*'
 $modules = @(
     @{ Name = 'Microsoft.Graph.Authentication'; MinimumVersion = '1.27.0' },
     @{ Name = 'Microsoft.Graph.DeviceManagement' },
-    @{ Name = 'Microsoft.Graph.Groups' },
     @{ Name = 'MSAL.PS'; MinimumVersion = '4.37.0.0' }
 )
 
