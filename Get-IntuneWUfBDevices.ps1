@@ -142,6 +142,59 @@ foreach ($device in $Devices) {
 # Output the devices with OS version
 $DeviceOsInfo | Format-Table -AutoSize
 
+# Step 6: Map OSVersion to Windows release and update info using static mapping with smart matching
+$OsReleaseTable = @(
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 24H2'; 'OS Version' = '10.0.26100.4349'; 'Update Date and KB' = 'June 10, 2025 – KB5060842' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 24H2'; 'OS Version' = '10.0.26100.4061'; 'Update Date and KB' = 'May 13, 2025 – KB5058411' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 23H2'; 'OS Version' = '10.0.22631.5472'; 'Update Date and KB' = 'June 10, 2025 – KB5060999' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 23H2'; 'OS Version' = '10.0.22631.5335'; 'Update Date and KB' = 'May 13, 2025 – KB5058405' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 22H2'; 'OS Version' = '10.0.22621.5472'; 'Update Date and KB' = 'June 10, 2025 – KB5060999' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 11 22H2'; 'OS Version' = '10.0.22621.5335'; 'Update Date and KB' = 'May 13, 2025 – KB5058405' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 10 22H2'; 'OS Version' = '10.0.19045.5965'; 'Update Date and KB' = 'June 10, 2025 – KB5060533' },
+    [PSCustomObject]@{ 'OS Name' = 'Windows 10 22H2'; 'OS Version' = '10.0.19045.5854'; 'Update Date and KB' = 'May 13, 2025 – KB5058379' }
+)
+
+foreach ($device in $DeviceOsInfo) {
+    $osVersion = $device.OSVersion
+    $device.'OS Name' = $null
+    $device.'Update Date and KB' = $null
+
+    if ($osVersion -match '^([\d]+\.[\d]+\.[\d]+)\.(\d+)$') {
+        $buildRoot = $Matches[1]
+        $patchNum = [int]$Matches[2]
+
+        # Get all release table entries for this build root
+        $matchingReleases = $OsReleaseTable | Where-Object { $_.'OS Version' -like "$buildRoot.*" }
+        if ($matchingReleases) {
+            $device.'OS Name' = $matchingReleases[0].'OS Name'
+
+            # Build a sorted list of patch numbers and their update info
+            $patchList = $matchingReleases | ForEach-Object {
+                if ($_.'OS Version' -match "^$buildRoot\.(\d+)$") {
+                    [PSCustomObject]@{
+                        Patch = [int]$Matches[1]
+                        Update = $_.'Update Date and KB'
+                    }
+                }
+            } | Where-Object { $_ } | Sort-Object Patch
+
+            if ($patchList.Count -gt 0) {
+                # Find the update info for the closest patch less than or equal to the device's patch
+                $bestMatch = $patchList | Where-Object { $_.Patch -le $patchNum } | Sort-Object Patch -Descending | Select-Object -First 1
+                if ($bestMatch) {
+                    $device.'Update Date and KB' = $bestMatch.Update
+                } else {
+                    # If device patch is less than all, use the lowest available
+                    $device.'Update Date and KB' = $patchList[0].Update
+                }
+            }
+        }
+    }
+}
+
+# Output the devices with OS version, OS Name, and Update info
+$DeviceOsInfo | Format-Table DeviceId,DeviceName,WUfBSwiched,OSVersion,'OS Name','Update Date and KB' -AutoSize
+
 
 
 
