@@ -101,5 +101,47 @@ if ($State -ne "completed") {
 $GetReportUrl = "https://graph.microsoft.com/beta/deviceManagement/reports/getCachedReport"
 $Report = Invoke-RestMethod -Method POST -Uri $GetReportUrl -Headers $Headers -Body $Payload
 
-# Output the report
-$Report.values | Format-Table -AutoSize
+# Format the report using $Report.schema and $Report.values
+$Devices = @()
+if ($Report.schema -and $Report.values) {
+    # $Report.schema is an array of objects with a 'column' property
+    $columns = $Report.schema | ForEach-Object { $_.column }
+    foreach ($row in $Report.values) {
+        $obj = @{}
+        for ($i = 0; $i -lt $columns.Count; $i++) {
+            $obj[$columns[$i]] = $row[$i]
+        }
+        $Devices += [PSCustomObject]$obj
+    }
+}
+
+# Output the devices as a table
+$Devices | Format-Table -AutoSize
+
+# Step 5: Get OS version for each device from Intune using Graph API
+$DeviceOsInfo = @()
+foreach ($device in $Devices) {
+    $deviceId = $device.DeviceId
+    if ($deviceId) {
+        $deviceUrl = "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$deviceId"
+        try {
+            $deviceInfo = Invoke-RestMethod -Method GET -Uri $deviceUrl -Headers $Headers
+            $osVersion = $deviceInfo.osVersion
+        } catch {
+            $osVersion = $null
+        }
+        $DeviceOsInfo += [PSCustomObject]@{
+            DeviceId = $deviceId
+            DeviceName = $device.DeviceName
+            WUfBSwiched = $device.WindowsUpdateforBusiness
+            OSVersion = $osVersion
+        }
+    }
+}
+
+# Output the devices with OS version
+$DeviceOsInfo | Format-Table -AutoSize
+
+
+
+
