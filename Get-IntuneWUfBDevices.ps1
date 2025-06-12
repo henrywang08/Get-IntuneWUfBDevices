@@ -13,20 +13,39 @@
 param()
 
 # Ensure required modules are installed and imported
+# Check if any Microsoft.Graph.* module is already loaded
+$graphLoaded = Get-Module -Name 'Microsoft.Graph*'
+
 $modules = @(
     @{ Name = 'Microsoft.Graph.Authentication'; MinimumVersion = '1.27.0' },
     @{ Name = 'Microsoft.Graph.DeviceManagement' },
     @{ Name = 'Microsoft.Graph.Groups' },
     @{ Name = 'MSAL.PS'; MinimumVersion = '4.37.0.0' }
 )
+
 foreach ($mod in $modules) {
     if (-not (Get-Module -ListAvailable -Name $mod.Name)) {
         Install-Module -Name $mod.Name -Force -Scope CurrentUser -AllowClobber
     }
-    if ($mod.MinimumVersion) {
-        Import-Module $mod.Name -MinimumVersion $mod.MinimumVersion -Force -ErrorAction Stop
+    # Only import if not already loaded, and avoid importing additional Graph modules if any Graph module is loaded
+    if ($mod.Name -like 'Microsoft.Graph*') {
+        if (-not $graphLoaded) {
+            if (-not (Get-Module -Name $mod.Name)) {
+                if ($mod.MinimumVersion) {
+                    Import-Module $mod.Name -MinimumVersion $mod.MinimumVersion -Force -ErrorAction Stop
+                } else {
+                    Import-Module $mod.Name -Force -ErrorAction Stop
+                }
+            }
+        }
     } else {
-        Import-Module $mod.Name -Force -ErrorAction Stop
+        if (-not (Get-Module -Name $mod.Name)) {
+            if ($mod.MinimumVersion) {
+                Import-Module $mod.Name -MinimumVersion $mod.MinimumVersion -Force -ErrorAction Stop
+            } else {
+                Import-Module $mod.Name -Force -ErrorAction Stop
+            }
+        }
     }
 }
 
@@ -116,7 +135,7 @@ if ($Report.schema -and $Report.values) {
 }
 
 # Output the devices as a table
-$Devices | Format-Table -AutoSize
+# $Devices | Format-Table -AutoSize
 
 # Step 5: Get OS version for each device from Intune using Graph API
 $DeviceOsInfo = @()
@@ -135,12 +154,14 @@ foreach ($device in $Devices) {
             DeviceName = $device.DeviceName
             WUfBSwiched = $device.WindowsUpdateforBusiness
             OSVersion = $osVersion
+            'OS Name' = $null
+            'Update Date and KB' = $null
         }
     }
 }
 
 # Output the devices with OS version
-$DeviceOsInfo | Format-Table -AutoSize
+# $DeviceOsInfo | Format-Table -AutoSize
 
 # Step 6: Map OSVersion to Windows release and update info using static mapping with smart matching
 $OsReleaseTable = @(
