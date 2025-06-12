@@ -1,19 +1,20 @@
 <#
 .SYNOPSIS
-    Retrieves Intune devices with Windows Update for Business enabled and their OS version.
+    Retrieves Intune devices with Windows Update for Business enabled and their OS version, mapping each OS version to its Windows release and update info.
 
 .DESCRIPTION
-    Connects to Microsoft Graph, requests a cached report for co-managed devices with WUfB enabled,
-    waits for the report to complete, and retrieves the report data.
+    This script connects to Microsoft Graph using a custom Entra ID app registration, requests a cached report for co-managed devices with Windows Update for Business (WUfB) enabled, waits for the report to complete, and retrieves the report data. It then fetches the OS version for each device, maps the OS version to the corresponding Windows release and update (using a static mapping table), and outputs a table with device and OS update information.
 
 .NOTES
-    Requires Microsoft.Graph PowerShell module and appropriate permissions (DeviceManagementManagedDevices.Read.All).
+    Requires Microsoft.Graph PowerShell modules and appropriate permissions (DeviceManagementManagedDevices.Read.All).
+    Handles module installation/import robustly to avoid assembly conflicts.
+    Outputs: DeviceId, DeviceName, WUfBSwiched, OSVersion, OS Name, Update Date and KB.
 #>
 
 param()
 
-# Ensure required modules are installed and imported
-# Check if any Microsoft.Graph.* module is already loaded
+# --- Module Installation and Import Section ---
+# Check if any Microsoft.Graph.* module is already loaded to avoid assembly conflicts
 $graphLoaded = Get-Module -Name 'Microsoft.Graph*'
 
 $modules = @(
@@ -24,6 +25,7 @@ $modules = @(
 )
 
 foreach ($mod in $modules) {
+    # Install module if not available
     if (-not (Get-Module -ListAvailable -Name $mod.Name)) {
         Install-Module -Name $mod.Name -Force -Scope CurrentUser -AllowClobber
     }
@@ -49,32 +51,34 @@ foreach ($mod in $modules) {
     }
 }
 
-# Ensure Get-MsalToken is available
+# Ensure Get-MsalToken is available for authentication
 if (-not (Get-Command Get-MsalToken -ErrorAction SilentlyContinue)) {
     Write-Error "Get-MsalToken is not available. Please restart your PowerShell session to complete module import, then rerun this script."
     exit 1
 }
 
-# Step 1: Connect to Microsoft Graph
+# --- Authentication and Graph Connection Section ---
+# Define required Microsoft Graph API scopes
 $Scopes = @(
     "DeviceManagementManagedDevices.Read.All",
     "Group.Read.All",
     "GroupMember.Read.All"
 )
+# Set your Entra ID app registration and tenant ID
 $ClientId = "1a4d712f-91f8-4f93-8c73-a7718eca0274" # Custom Entra ID App Registration
 $TenantId = "55f37ed7-ebe7-4cea-8686-1ca9653384f1" # <-- Replace with your Azure AD tenant ID
 
-# Get access token using MSAL with tenant-specific endpoint
+# Authenticate and get access token using MSAL
 $MsalToken = Get-MsalToken -ClientId $ClientId -TenantId $TenantId -Scopes $Scopes -Interactive
 $AccessToken = $MsalToken.AccessToken
 
-# Connect to Graph (optional, for SDK cmdlets)
-# Convert access token to SecureString for Connect-MgGraph
+# Connect to Microsoft Graph SDK (optional, for SDK cmdlets)
 $SecureAccessToken = ConvertTo-SecureString $AccessToken -AsPlainText -Force
 Connect-MgGraph -AccessToken $SecureAccessToken
-# Select-MgProfile -Name beta
+# Select-MgProfile -Name beta # Uncomment if you need beta profile
 
-# Step 2: Request cached report configuration
+# --- Cached Report Request Section ---
+# Request a cached report for co-managed devices with WUfB enabled
 $ReportId = "ComanagedDeviceWorkloads_00000000-0000-0000-0000-000000000001"
 $Payload = @{
     id     = $ReportId
@@ -89,6 +93,7 @@ $Headers = @{
     "Authorization" = "Bearer $AccessToken"
 }
 
+# Submit the report request
 try {
     $response = Invoke-RestMethod -Method POST -Uri $CachedReportUrl -Headers $Headers -Body $Payload
     $StatusCode = 200  # Success
@@ -99,10 +104,13 @@ try {
     throw
 }
 
-# Step 3: Wait for report state to "completed"
+# --- Report Completion Polling Section ---
+# Wait for the report to complete (polling)
 $StatusUrl = "https://graph.microsoft.com/beta/deviceManagement/reports/cachedReportConfigurations('$ReportId')"
 $MaxAttempts = 30
 $Attempt = 0
+$State = $null
+
 do {
     Start-Sleep -Seconds 5
     $Status = Invoke-RestMethod -Method GET -Uri $StatusUrl -Headers $Headers
@@ -116,11 +124,12 @@ if ($State -ne "completed") {
     exit 1
 }
 
-# Step 4: Retrieve the report
+# --- Report Retrieval and Parsing Section ---
+# Retrieve the completed report
 $GetReportUrl = "https://graph.microsoft.com/beta/deviceManagement/reports/getCachedReport"
 $Report = Invoke-RestMethod -Method POST -Uri $GetReportUrl -Headers $Headers -Body $Payload
 
-# Format the report using $Report.schema and $Report.values
+# Parse the report schema and values into an array of device objects
 $Devices = @()
 if ($Report.schema -and $Report.values) {
     # $Report.schema is an array of objects with a 'column' property
@@ -134,10 +143,8 @@ if ($Report.schema -and $Report.values) {
     }
 }
 
-# Output the devices as a table
-# $Devices | Format-Table -AutoSize
-
-# Step 5: Get OS version for each device from Intune using Graph API
+# --- Device OS Version Retrieval Section ---
+# For each device, fetch the OS version from Intune managedDevices endpoint
 $DeviceOsInfo = @()
 foreach ($device in $Devices) {
     $deviceId = $device.DeviceId
@@ -160,10 +167,8 @@ foreach ($device in $Devices) {
     }
 }
 
-# Output the devices with OS version
-# $DeviceOsInfo | Format-Table -AutoSize
-
-# Step 6: Map OSVersion to Windows release and update info using static mapping with smart matching
+# --- OS Version Mapping Section ---
+# Map each device's OSVersion to Windows release and update info using a static mapping table
 $OsReleaseTable = @(
     [PSCustomObject]@{ 'OS Name' = 'Windows 11 24H2'; 'OS Version' = '10.0.26100.4349'; 'Update Date and KB' = 'June 10, 2025 – KB5060842' },
     [PSCustomObject]@{ 'OS Name' = 'Windows 11 24H2'; 'OS Version' = '10.0.26100.4061'; 'Update Date and KB' = 'May 13, 2025 – KB5058411' },
@@ -213,7 +218,8 @@ foreach ($device in $DeviceOsInfo) {
     }
 }
 
-# Output the devices with OS version, OS Name, and Update info
+# --- Output Section ---
+# Output the devices with OS version, OS Name, and Update info as a table
 $DeviceOsInfo | Format-Table DeviceId,DeviceName,WUfBSwiched,OSVersion,'OS Name','Update Date and KB' -AutoSize
 
 
