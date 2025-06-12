@@ -112,9 +112,14 @@ $State = $null
 
 do {
     Start-Sleep -Seconds 5
-    $Status = Invoke-RestMethod -Method GET -Uri $StatusUrl -Headers $Headers
-    $State = $Status.status
-    Write-Host "Report state: $State"
+    try {
+        $Status = Invoke-RestMethod -Method GET -Uri $StatusUrl -Headers $Headers
+        $State = $Status.status
+        Write-Host "Report state: $State"
+    } catch {
+        Write-Error "Failed to get report status: $($_.Exception.Message)"
+        exit 1
+    }
     $Attempt++
 } while ($State -ne "completed" -and $Attempt -lt $MaxAttempts)
 
@@ -125,8 +130,13 @@ if ($State -ne "completed") {
 
 # --- Report Retrieval and Parsing Section ---
 # Retrieve the completed report
-$GetReportUrl = "https://graph.microsoft.com/beta/deviceManagement/reports/getCachedReport"
-$Report = Invoke-RestMethod -Method POST -Uri $GetReportUrl -Headers $Headers -Body $Payload
+try {
+    $GetReportUrl = "https://graph.microsoft.com/beta/deviceManagement/reports/getCachedReport"
+    $Report = Invoke-RestMethod -Method POST -Uri $GetReportUrl -Headers $Headers -Body $Payload
+} catch {
+    Write-Error "Failed to retrieve the completed report: $($_.Exception.Message)"
+    exit 1
+}
 
 # Parse the report schema and values into an array of device objects
 $Devices = @()
@@ -153,6 +163,7 @@ foreach ($device in $Devices) {
             $deviceInfo = Invoke-RestMethod -Method GET -Uri $deviceUrl -Headers $Headers
             $osVersion = $deviceInfo.osVersion
         } catch {
+            Write-Error "Failed to get OS version for device $($device.DeviceName) ($deviceId): $($_.Exception.Message)"
             $osVersion = $null
         }
         $DeviceOsInfo += [PSCustomObject]@{
